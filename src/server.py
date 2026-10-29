@@ -3,20 +3,26 @@
 import socket
 import threading
 
+try:
+    from .protocol import NewlineFramer
+except ImportError:  # Compatibilidade com a execução direta de src/server.py.
+    from protocol import NewlineFramer
+
 HOST = "127.0.0.1"
 PORT = 5000
 BUFFER_SIZE = 4096
 
 
 def processar_dados(dados):
-    """Processa os bytes recebidos sem assumir um protocolo específico."""
-    print(f"Dados recebidos: {dados!r}")
+    """Processa uma mensagem de texto recebida do cliente."""
+    print(f"Dados recebidos: {dados}")
 
 
 def atender_cliente(cliente, endereco, processador=processar_dados):
-    """Recebe dados de um cliente até sua desconexão."""
+    """Recebe mensagens UTF-8 delimitadas por newline até desconexão."""
     with cliente:
         print(f"Cliente conectado: {endereco}")
+        framer = NewlineFramer()
         while True:
             try:
                 dados = cliente.recv(BUFFER_SIZE)
@@ -24,7 +30,19 @@ def atender_cliente(cliente, endereco, processador=processar_dados):
                 break
             if not dados:
                 break
-            processador(dados)
+            try:
+                for mensagem in framer.feed(dados):
+                    processador(mensagem)
+            except UnicodeDecodeError:
+                print(f"Mensagem UTF-8 inválida de {endereco}")
+                break
+        try:
+            mensagem_final = framer.finish()
+        except UnicodeDecodeError:
+            mensagem_final = None
+            print(f"Mensagem UTF-8 inválida de {endereco}")
+        if mensagem_final is not None:
+            processador(mensagem_final)
         print(f"Cliente desconectado: {endereco}")
 
 
