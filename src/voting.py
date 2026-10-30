@@ -16,23 +16,44 @@ class Voting:
             )
 
         self.votos = {"A": 0, "B": 0, "C": 0}
+        self._votos_por_participante = {}
         self.duracao_votacao = duracao_votacao
         self.estado = "não iniciada"
         self._prazo_final = None
         self._lock = threading.Lock()
 
     # Método para registrar um voto
-    def registro_voto(self, candidate):
+    def registro_voto(self, candidate, participante):
+        """Valida e registra um único voto por ID, atomicamente.
+
+        O histórico pertence à votação, e não ao socket: reconectar não
+        permite votar novamente. Falhas não modificam histórico nem contagem.
+        """
         # Verifica se o voto está no horário permitido
         with self._lock:
             self._atualizar_estado_pelo_prazo()
             if self.estado != "votando":
                 raise RuntimeError("Não é possível votar fora do período ativo.")
 
-            if candidate in self.votos:
-                self.votos[candidate] += 1
-            else:
-                self.votos[candidate] = 1
+            if (
+                not isinstance(participante, str)
+                or not participante
+                or not participante.isprintable()
+                or any(caractere.isspace() for caractere in participante)
+            ):
+                raise ValueError("Informe um identificador válido, sem espaços.")
+            if not isinstance(candidate, str) or candidate not in self.votos:
+                raise ValueError("Opção inválida. Escolha A, B ou C.")
+            if participante in self._votos_por_participante:
+                raise ValueError("Este identificador já votou.")
+
+            self._votos_por_participante[participante] = candidate
+            self.votos[candidate] += 1
+
+    def obter_resultados(self):
+        """Retorna uma cópia consistente da contagem, sem expor o histórico."""
+        with self._lock:
+            return self.votos.copy()
 
     # Método para exibir os resultados da votação
     def exibir_resultados(self):

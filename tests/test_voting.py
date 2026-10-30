@@ -33,14 +33,14 @@ class VotingTests(unittest.TestCase):
     def test_rejeita_votos_fora_do_periodo_ativo(self):
         voting = Voting(10)
         with self.assertRaises(RuntimeError):
-            voting.registro_voto("A")
+            voting.registro_voto("A", "ana")
 
         with patch("src.voting.time.monotonic", side_effect=[100, 100, 110]):
             voting.iniciar_votacao()
-            voting.registro_voto("A")
+            voting.registro_voto("A", "ana")
 
             with self.assertRaises(RuntimeError):
-                voting.registro_voto("B")
+                voting.registro_voto("B", "bia")
 
         self.assertEqual(voting.votos, {"A": 1, "B": 0, "C": 0})
 
