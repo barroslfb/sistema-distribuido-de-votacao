@@ -99,8 +99,15 @@ class VotingTCPTests(unittest.TestCase):
         with socket.create_connection(self.endereco, timeout=3) as cliente:
             with cliente.makefile("rb") as respostas:
                 cliente.sendall(comandos)
-                return [respostas.readline().decode("utf-8").strip()
-                        for _ in comandos.splitlines()]
+                resultado = []
+                for comando in comandos.splitlines():
+                    resposta = respostas.readline().decode("utf-8").strip()
+                    while resposta.startswith(("UPDATE ", "END ")):
+                        # Eventos de broadcast podem preceder a resposta do
+                        # próprio comando em sockets usados concorrentemente.
+                        resposta = respostas.readline().decode("utf-8").strip()
+                    resultado.append(resposta)
+                return resultado
 
     def test_confirmacao_erro_e_reconexao_com_mesmo_id(self):
         self.assertEqual(self.trocar(b"JOIN ana\nVOTE A\n"), ["SUCCESS", "SUCCESS"])
