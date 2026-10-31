@@ -1,85 +1,46 @@
 # Sistema distribuído de votação — Grupo 7
 
-Projeto da CIN0143: votação multiusuário no modelo cliente-servidor com sockets TCP.
+Projeto da disciplina CIN0143: votação com clientes e servidor que se comunicam por sockets TCP.
+
+## Arquitetura e funcionamento
+
+- `src/server.py` inicia o servidor TCP e cria uma thread para cada conexão. A votação compartilhada é iniciada pelo servidor.
+- `src/client.py` conecta ao servidor, envia o identificador e permite digitar comandos. Uma thread separada recebe respostas e atualizações enquanto o usuário digita.
+- `src/voting.py` mantém em memória os votos para as opções A, B e C. Uma trava protege a validação e o registro; cada identificador pode votar uma única vez durante a votação.
+- `src/protocol.py` codifica mensagens UTF-8 terminadas por newline e reúne os fragmentos recebidos pelo TCP até completar cada mensagem.
+
+O protocolo aceita `JOIN identificador` e `VOTE A`, `VOTE B` ou `VOTE C`. O servidor responde `SUCCESS` ou `ERROR mensagem`. Após cada voto aceito, envia `UPDATE A:n B:n C:n` a todos os clientes conectados, inclusive quem votou. Ao expirar o prazo, envia `END A:n B:n C:n`. O cliente exibe essas mensagens recebidas.
+
+O identificador é definido no `JOIN` e não pode ser trocado na mesma conexão. Uma reconexão pode usar o mesmo identificador, mas não registrar outro voto. Identificadores não têm autenticação. Os votos e o histórico existem apenas na memória do processo; reiniciar o servidor inicia uma votação nova.
+
+## Requisitos
+
+Python 3.10 ou superior. O projeto usa apenas a biblioteca padrão do Python; não requer instalação de dependências externas.
 
 ## Executar
 
-Requer Python 3.10 ou superior. Não há dependências externas. Na raiz do projeto:
+Na raiz do projeto, inicie o servidor:
 
 ```sh
 python -m src.server
 ```
 
-Em outros terminais (um por participante):
+Por padrão, ele escuta em `127.0.0.1:5000` e a votação dura 300 segundos. Em cada outro terminal, inicie um cliente:
 
 ```sh
 python -m src.client
 ```
 
-Informe um ID, por exemplo `theo`. O cliente envia `JOIN theo` automaticamente.
-Depois digite `VOTE A`, `VOTE B` ou `VOTE C`, pressionando Enter.
-O servidor escuta em `127.0.0.1:5000` e inicia uma votação de 300 segundos.
-A duração é definida por `DURACAO_VOTACAO` em `src/server.py`.
-Para encerrar o processo, use Ctrl+C.
-
-Por padrão, tudo roda na mesma máquina. Para computadores diferentes na mesma
-rede, configure o `HOST` do servidor com o endereço da interface de rede e o
-`HOST` dos clientes com o IP do servidor; a porta deve estar acessível na rede.
-
-## Feature 4: registro e validação
-
-O servidor mantém uma instância compartilhada de `Voting` e uma thread por
-conexão. Cada conexão tem uma `SessaoVotacao`, que guarda o ID recebido no `JOIN`.
-O ID não pode ser trocado durante a conexão. Outro socket pode usar o mesmo ID,
-mas o histórico compartilhado impede que esse ID registre dois votos.
-
-Fluxo de exemplo no protocolo (cada mensagem termina com `\n`):
-
-```text
-cliente -> servidor: JOIN theo
-servidor -> cliente: SUCCESS
-cliente -> servidor: VOTE A
-servidor -> cliente: SUCCESS
-cliente -> servidor: VOTE B
-servidor -> cliente: ERROR Este identificador já votou.
-```
-
-`Voting.registro_voto(candidate, participante)` verifica o prazo, o ID, a opção
-e a existência de voto anterior. Somente então salva o voto no dicionário
-`_votos_por_participante` e incrementa a contagem em `votos`.
-Uma mesma trava (`threading.Lock`) protege todas essas etapas: duas threads
-com o mesmo ID não conseguem passar pela verificação de duplicidade juntas.
-Erros lançam `ValueError` ou `RuntimeError`; a sessão os converte em `ERROR mensagem`.
-`obter_resultados()` fornece uma cópia da contagem sob a mesma trava para a feature 5.
-
-O TCP entrega um fluxo ordenado de bytes; ele não separa comandos. Por isso,
-`NewlineFramer` acumula fragmentos até encontrar `\n`, inclusive quando um comando
-chega em vários `recv()` ou vários comandos chegam juntos. O servidor responde
-com `sendall()`, usando UTF-8 e o mesmo delimitador. A trava resolve a concorrência
-na memória; essa garantia não vem do TCP.
+Informe o identificador quando solicitado. Depois, envie um voto digitando, por exemplo, `VOTE A` e pressionando Enter. Para encerrar os processos, use Ctrl+C. O host, a porta e a duração são definidos pelas constantes `HOST`, `PORT` e `DURACAO_VOTACAO` em `src/server.py` e `src/client.py`; para máquinas diferentes, configure o servidor para escutar em uma interface acessível e ajuste o `HOST` do cliente para o endereço do servidor.
 
 ## Testar
+
+Na raiz do repositório, execute a suíte com a biblioteca `unittest`:
 
 ```sh
 python -m unittest discover -s tests -v
 ```
 
-Os testes verificam opções e IDs inválidos, duplicidade, prazo, concorrência,
-comandos fragmentados e respostas por sockets TCP reais. Para conferir manualmente:
-vote com `theo`, reconecte usando `theo` e tente votar de novo; o servidor rejeita.
-Com um novo ID, tente `VOTE D` e depois `VOTE B`: só o segundo deve ser aceito.
+Os testes cobrem validação e prazo da votação, votos duplicados e concorrentes, enquadramento de mensagens TCP fragmentadas ou agrupadas, comunicação cliente-servidor, broadcasts `UPDATE` e `END` e desconexões. Há testes unitários e testes de integração que abrem sockets TCP locais; não é necessário iniciar manualmente o servidor ou clientes para rodar a suíte.
 
-## Escopo e limitações
-
-- Os votos ficam em memória enquanto o servidor estiver em execução; reiniciar
-  o processo cria outra votação e limpa o histórico.
-- O ID é informado pelo usuário, sem autenticação. A regra garante um voto por
-  ID, mas não impede uma pessoa de escolher outros IDs.
-- A transmissão automática de `UPDATE` e `END` para todos os clientes pertence
-  à feature 5 e ainda não está implementada nesta alteração. A rejeição de votos
-  após o prazo já está ativa. Antes da entrega final do grupo, é necessário
-  integrar e validar essa transmissão.
-
-Enunciado: [APS01.pdf — Equipe 07](https://drive.google.com/file/d/1LNG6CI6kbngRP2qx7o4vVL51vPYGQAOB/view).
-Entrega: link do GitHub com código organizado e instruções neste README,
-até 30/10/2026 às 23:59, por um integrante do grupo.
+Para conferir manualmente, inicie o servidor e dois clientes. Vote com um identificador e tente votar novamente com o mesmo identificador em outra conexão: o segundo voto deve receber `ERROR`. O voto aceito deve gerar uma atualização nos clientes conectados. Um voto com opção fora de A, B ou C também deve ser rejeitado.
