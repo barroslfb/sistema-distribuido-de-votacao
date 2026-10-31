@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 from src.client import executar_cliente, receber_mensagens
 from src.protocol import NewlineFramer, encode_message
+from src.server import SessaoVotacao
+from src.voting import Voting
 
 
 class NewlineFramerTests(unittest.TestCase):
@@ -36,6 +38,39 @@ class NewlineFramerTests(unittest.TestCase):
             encode_message(b"JOIN ana")
         with self.assertRaises(ValueError):
             encode_message("JOIN ana\nVOTE A")
+
+
+class VotingCommandProtocolTests(unittest.TestCase):
+    def setUp(self):
+        self.votacao = Voting(10)
+        self.votacao.iniciar_votacao()
+        self.sessao = SessaoVotacao(self.votacao)
+
+    def test_aceita_join_e_voto_validos(self):
+        self.assertEqual(self.sessao.processar("JOIN ana"), "SUCCESS")
+        self.assertEqual(self.sessao.processar("VOTE B"), "SUCCESS")
+        self.assertEqual(self.votacao.obter_resultados(), {"A": 0, "B": 1, "C": 0})
+
+    def test_rejeita_comandos_invalidos_e_voto_sem_identificacao(self):
+        for mensagem in ("VOTE A", "JOIN", "JOIN ana bia", "PING x", "VOTE A B"):
+            with self.subTest(mensagem=mensagem):
+                self.assertTrue(self.sessao.processar(mensagem).startswith("ERROR"))
+
+        self.assertEqual(self.sessao.processar("JOIN ana"), "SUCCESS")
+        self.assertTrue(self.sessao.processar("VOTE D").startswith("ERROR"))
+        self.assertEqual(self.votacao.obter_resultados(), {"A": 0, "B": 0, "C": 0})
+
+    def test_rejeita_identificador_duplicado_e_voto_apos_encerramento(self):
+        self.assertEqual(self.sessao.processar("JOIN ana"), "SUCCESS")
+        self.assertEqual(self.sessao.processar("VOTE A"), "SUCCESS")
+        self.assertTrue(self.sessao.processar("VOTE B").startswith("ERROR"))
+        self.assertTrue(self.sessao.processar("JOIN bia").startswith("ERROR"))
+
+        self.votacao.encerrar_votacao()
+        outra_sessao = SessaoVotacao(self.votacao)
+        self.assertEqual(outra_sessao.processar("JOIN bia"), "SUCCESS")
+        self.assertTrue(outra_sessao.processar("VOTE C").startswith("ERROR"))
+        self.assertEqual(self.votacao.obter_resultados(), {"A": 1, "B": 0, "C": 0})
 
 
 class ClientReceptionTests(unittest.TestCase):
