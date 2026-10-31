@@ -44,6 +44,21 @@ class VotingTests(unittest.TestCase):
 
         self.assertEqual(voting.votos, {"A": 1, "B": 0, "C": 0})
 
+    def test_aceita_votos_validos_e_rejeita_opcao_invalida_sem_consumir_id(self):
+        voting = Voting(10)
+        with patch("src.voting.time.monotonic", return_value=100):
+            voting.iniciar_votacao()
+            with self.assertRaises(ValueError):
+                voting.registro_voto("D", "ana")
+            voting.registro_voto("A", "ana")
+            voting.registro_voto("B", "bia")
+            voting.registro_voto("C", "caio")
+
+            with self.assertRaises(ValueError):
+                voting.registro_voto("C", "ana")
+
+        self.assertEqual(voting.obter_resultados(), {"A": 1, "B": 1, "C": 1})
+
     def test_encerramento_explicito_e_inicio_unico(self):
         voting = Voting(10)
         with patch("src.voting.time.monotonic", return_value=100):
