@@ -51,14 +51,18 @@ class Voting:
             self.votos[candidate] += 1
 
     def obter_resultados(self):
-        """Retorna uma cópia consistente da contagem, sem expor o histórico."""
+        """Calcula e retorna as contagens a partir dos votos registrados."""
         with self._lock:
-            return self.votos.copy()
+            resultados = {candidate: 0 for candidate in self.votos}
+            for candidate in self._votos_por_participante.values():
+                resultados[candidate] += 1
+            # Mantém o atributo público legado sincronizado com o histórico.
+            self.votos.update(resultados)
+            return resultados
 
     # Método para exibir os resultados da votação
     def exibir_resultados(self):
-        with self._lock:
-            votos = self.votos.copy()
+        votos = self.obter_resultados()
 
         print("Resultados da votação:")
         for candidate, count in votos.items():
