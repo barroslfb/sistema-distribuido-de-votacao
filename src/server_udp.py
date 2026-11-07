@@ -5,11 +5,11 @@ import threading
 
 try:
     from .protocol import COMMAND_END, COMMAND_UPDATE, encode_message
-    from .server import SessaoVotacao, _mensagem_resultados
+    from .server import _mensagem_resultados
     from .voting import Voting
 except ImportError:  # Compatibilidade com execução direta de src/server_udp.py.
     from protocol import COMMAND_END, COMMAND_UPDATE, encode_message
-    from server import SessaoVotacao, _mensagem_resultados
+    from server import _mensagem_resultados
     from voting import Voting
 
 HOST = "127.0.0.1"
@@ -32,7 +32,8 @@ def atender_datagramas(servidor, processador=None, votacao=None):
         votacao = Voting(DURACAO_VOTACAO)
         votacao.iniciar_votacao()
 
-    sessoes = {}
+    participantes_por_endereco = {}
+    enderecos_por_participante = {}
     clientes = set()
     lock = threading.Lock()
     eventos_votacao_lock = threading.Lock()
@@ -80,10 +81,17 @@ def atender_datagramas(servidor, processador=None, votacao=None):
                 eh_voto = mensagem.split()[:1] == ["VOTE"]
                 evento_lock = eventos_votacao_lock if eh_voto else _NoOpLock()
                 with evento_lock:
-                    with lock:
-                        sessao = sessoes.setdefault(endereco, SessaoVotacao(votacao))
-                        clientes.add(endereco)
-                    resposta = sessao.processar(mensagem)
+                    resposta = processar_comando(
+                        mensagem,
+                        endereco,
+                        votacao,
+                        participantes_por_endereco,
+                        enderecos_por_participante,
+                        lock,
+                    )
+                    if mensagem.split()[:1] == ["JOIN"] and resposta == "SUCCESS":
+                        with lock:
+                            clientes.add(endereco)
                     try:
                         _enviar(servidor, endereco, resposta)
                     except OSError:
@@ -119,6 +127,96 @@ def executar_servidor(host=HOST, port=PORT):
         servidor.settimeout(0.5)
         print(f"Servidor UDP escutando em {host}:{port}")
         atender_datagramas(servidor)
+
+# Função que processa os comandos recebidos do cliente
+def processar_comando(
+    mensagem,
+    endereco,
+    votacao,
+    participantes_por_endereco,
+    enderecos_por_participante,
+    lock,
+):
+    """Processa um comando recebido do cliente.
+
+    Retorna a resposta a ser enviada de volta ao cliente.
+    """
+    partes = mensagem.split()
+    if not partes:
+        return "ERROR Comando vazio."
+    if partes[0] == "JOIN":
+        return processar_join(
+            mensagem,
+            endereco,
+            participantes_por_endereco,
+            enderecos_por_participante,
+            lock,
+        )
+    if partes[0] == "VOTE":
+        return processar_vote(
+            mensagem,
+            endereco,
+            votacao,
+            participantes_por_endereco,
+            lock,
+        )
+    return "ERROR Comando desconhecido."
+
+
+# Função que processa o comando JOIN
+def processar_join(
+    mensagem,
+    endereco,
+    participantes_por_endereco,
+    enderecos_por_participante,
+    lock,
+):
+    partes = mensagem.split()
+    if len(partes) != 2 or partes[0] != "JOIN":
+        return "ERROR Use JOIN identificador."
+
+    participante = partes[1]
+    if not participante.isprintable() or any(
+        caractere.isspace() for caractere in participante
+    ):
+        return "ERROR Identificador inválido."
+
+    with lock:
+        participante_atual = participantes_por_endereco.get(endereco)
+        if participante_atual is not None:
+            if participante_atual == participante:
+                return "SUCCESS"
+            return "ERROR Este endereço já está associado a outro identificador."
+
+        endereco_atual = enderecos_por_participante.get(participante)
+        if endereco_atual is not None and endereco_atual != endereco:
+            return "ERROR Este identificador já está associado a outro endereço."
+
+        participantes_por_endereco[endereco] = participante
+        enderecos_por_participante[participante] = endereco
+    return "SUCCESS"
+
+
+# Função que processa o voto
+def processar_vote(mensagem, endereco, votacao, participantes_por_endereco, lock):
+    """Processa o comando VOTE recebido do cliente.
+
+    Usa o identificador previamente associado ao endereço de origem.
+    """
+    partes = mensagem.split()
+    if len(partes) != 2 or partes[0] != "VOTE":
+        return "ERROR Use VOTE opcao."
+
+    with lock:
+        participante = participantes_por_endereco.get(endereco)
+    if participante is None:
+        return "ERROR Identifique-se com JOIN antes de votar."
+
+    try:
+        votacao.registro_voto(partes[1], participante)
+    except (ValueError, RuntimeError) as erro:
+        return f"ERROR {erro}"
+    return "SUCCESS"
 
 
 if __name__ == "__main__":
