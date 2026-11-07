@@ -95,7 +95,10 @@ def atender_datagramas(servidor, processador=None, votacao=None):
                     try:
                         _enviar(servidor, endereco, resposta)
                     except OSError:
-                        continue
+                        # Um voto já aceito altera a votação mesmo que a
+                        # resposta unicast não possa ser entregue. Preserve o
+                        # broadcast do novo snapshot para os demais clientes.
+                        pass
                     if resposta == "SUCCESS" and eh_voto:
                         update = _mensagem_resultados(COMMAND_UPDATE, votacao)
                         with lock:
