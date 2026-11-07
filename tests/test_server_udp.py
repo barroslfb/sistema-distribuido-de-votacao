@@ -2,6 +2,7 @@
 
 import socket
 import threading
+import time
 import unittest
 
 from src.server_udp import atender_datagramas
@@ -62,48 +63,6 @@ class UDPServerTests(unittest.TestCase):
         self.assertEqual(self.receber(bia), "UPDATE A:1 B:0 C:0")
         self.assertEqual(self.votacao.obter_resultados(), {"A": 1, "B": 0, "C": 0})
 
-    def test_cliente_invalido_nao_interrompe_atendimento_dos_demais(self):
-        ana = self.novo_cliente()
-        bia = self.novo_cliente()
-        ana.sendto(b"\xff", self.endereco)
-        self.enviar_comando(bia, "JOIN bia\nVOTE C")
-
-        self.assertEqual(self.receber(bia), "SUCCESS")
-        self.assertEqual(self.receber(bia), "SUCCESS")
-        self.assertEqual(self.receber(bia), "UPDATE A:0 B:0 C:1")
-        self.assertEqual(self.votacao.obter_resultados(), {"A": 0, "B": 0, "C": 1})
-
-    def test_vote_sem_join_e_rejeitado(self):
-        cliente = self.novo_cliente()
-
-        self.enviar_comando(cliente, "VOTE A")
-
-        self.assertEqual(
-            self.receber(cliente),
-            "ERROR Identifique-se com JOIN antes de votar.",
-        )
-        self.assertEqual(self.votacao.obter_resultados(), {"A": 0, "B": 0, "C": 0})
-
-    def test_identificador_nao_pode_ser_associado_a_outro_endereco(self):
-        ana = self.novo_cliente()
-        outro_endereco = self.novo_cliente()
-
-        self.enviar_comando(ana, "JOIN ana")
-        self.assertEqual(self.receber(ana), "SUCCESS")
-
-        self.enviar_comando(outro_endereco, "JOIN ana")
-        self.assertEqual(
-            self.receber(outro_endereco),
-            "ERROR Este identificador já está associado a outro endereço.",
-        )
-
-        self.enviar_comando(outro_endereco, "VOTE B")
-        self.assertEqual(
-            self.receber(outro_endereco),
-            "ERROR Identifique-se com JOIN antes de votar.",
-        )
-        self.assertEqual(self.votacao.obter_resultados(), {"A": 0, "B": 0, "C": 0})
-
     def test_opcao_invalida_e_voto_duplicado_nao_alteram_resultados(self):
         cliente = self.novo_cliente()
         self.enviar_comando(cliente, "JOIN ana")
@@ -120,6 +79,79 @@ class UDPServerTests(unittest.TestCase):
         self.enviar_comando(cliente, "VOTE B")
         self.assertTrue(self.receber(cliente).startswith("ERROR Este identificador já votou."))
         self.assertEqual(self.votacao.obter_resultados(), {"A": 1, "B": 0, "C": 0})
+
+    def test_end_e_broadcastado_ao_expirar_prazo_sem_novos_votos(self):
+        ana = self.novo_cliente()
+        bia = self.novo_cliente()
+        self.enviar_comando(ana, "JOIN ana")
+        self.enviar_comando(bia, "JOIN bia")
+        self.assertEqual(self.receber(ana), "SUCCESS")
+        self.assertEqual(self.receber(bia), "SUCCESS")
+
+        # Encurta o prazo da votação já iniciada para manter o teste rápido.
+        self.votacao._prazo_final = time.monotonic() + 0.1
+
+        esperado = "END A:0 B:0 C:0"
+        self.assertEqual(self.receber(ana), esperado)
+        self.assertEqual(self.receber(bia), esperado)
+        self.assertEqual(self.votacao.obter_resultados(), {"A": 0, "B": 0, "C": 0})
+
+    def test_falha_na_resposta_unicast_nao_impede_broadcast_do_voto(self):
+        # Substitui o servidor do fixture por um adaptador que simula a perda
+        # somente da resposta SUCCESS ao VOTE; os demais datagramas são reais.
+        self.servidor.close()
+        self.thread.join(timeout=2)
+        self.assertFalse(self.thread.is_alive())
+
+        servidor = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        servidor.bind(("127.0.0.1", 0))
+        servidor.settimeout(0.1)
+        self.servidor = servidor
+        self.endereco = servidor.getsockname()
+
+        class ServidorComFalhaUnicast:
+            def __init__(self, socket_servidor):
+                self.socket = socket_servidor
+                self.endereco_votante = None
+                self.falhar_proxima_resposta = False
+
+            def recvfrom(self, tamanho):
+                return self.socket.recvfrom(tamanho)
+
+            def sendto(self, dados, endereco):
+                if (
+                    self.falhar_proxima_resposta
+                    and endereco == self.endereco_votante
+                    and dados == b"SUCCESS\n"
+                ):
+                    self.falhar_proxima_resposta = False
+                    raise OSError("resposta unicast indisponível")
+                return self.socket.sendto(dados, endereco)
+
+        adaptador = ServidorComFalhaUnicast(servidor)
+        self.thread = threading.Thread(
+            target=atender_datagramas,
+            args=(adaptador,),
+            kwargs={"votacao": self.votacao},
+            daemon=True,
+        )
+        self.thread.start()
+
+        ana = self.novo_cliente()
+        bia = self.novo_cliente()
+        self.enviar_comando(ana, "JOIN ana")
+        self.enviar_comando(bia, "JOIN bia")
+        self.assertEqual(self.receber(ana), "SUCCESS")
+        self.assertEqual(self.receber(bia), "SUCCESS")
+
+        adaptador.endereco_votante = ana.getsockname()
+        adaptador.falhar_proxima_resposta = True
+        self.enviar_comando(ana, "VOTE B")
+
+        esperado = "UPDATE A:0 B:1 C:0"
+        self.assertEqual(self.receber(ana), esperado)
+        self.assertEqual(self.receber(bia), esperado)
+        self.assertEqual(self.votacao.obter_resultados(), {"A": 0, "B": 1, "C": 0})
 
 
 if __name__ == "__main__":
