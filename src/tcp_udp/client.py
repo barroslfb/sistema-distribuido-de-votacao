@@ -6,7 +6,7 @@ import threading
 try:
     from .protocol import COMMAND_JOIN, NewlineFramer, encode_message
 except ImportError:  # Compatibilidade com a execução direta de src/client.py.
-    from protocol import COMMAND_JOIN, NewlineFramer, encode_message
+    from src.tcp_udp.protocol import COMMAND_JOIN, NewlineFramer, encode_message
 
 HOST = "127.0.0.1"
 PORT = 5000

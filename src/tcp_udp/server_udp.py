@@ -3,14 +3,9 @@
 import socket
 import threading
 
-try:
-    from .protocol import COMMAND_END, COMMAND_UPDATE, encode_message
-    from .server import _mensagem_resultados
-    from .voting import Voting
-except ImportError:  # Compatibilidade com execução direta de src/server_udp.py.
-    from protocol import COMMAND_END, COMMAND_UPDATE, encode_message
-    from server import _mensagem_resultados
-    from voting import Voting
+from .voting import Voting
+from .protocol import COMMAND_END, COMMAND_UPDATE, encode_message
+from .server import _mensagem_resultados
 
 HOST = "127.0.0.1"
 PORT = 5001

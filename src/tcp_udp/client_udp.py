@@ -7,7 +7,7 @@ import argparse
 try:
     from .protocol import COMMAND_JOIN, encode_message
 except ImportError:  # Compatibilidade com execução direta de src/client_udp.py.
-    from protocol import COMMAND_JOIN, encode_message
+    from src.tcp_udp.protocol import COMMAND_JOIN, encode_message
 
 HOST = "127.0.0.1"
 PORT = 5001

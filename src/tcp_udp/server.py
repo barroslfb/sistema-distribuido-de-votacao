@@ -4,12 +4,13 @@ import socket
 import threading
 from contextlib import nullcontext
 
-try:
-    from .protocol import COMMAND_END, COMMAND_UPDATE, NewlineFramer, encode_message
-    from .voting import Voting
-except ImportError:  # Compatibilidade com a execução direta de src/server.py.
-    from protocol import COMMAND_END, COMMAND_UPDATE, NewlineFramer, encode_message
-    from voting import Voting
+from .voting import Voting
+from .protocol import (
+    COMMAND_END,
+    COMMAND_UPDATE,
+    NewlineFramer,
+    encode_message,
+)
 
 HOST = "127.0.0.1"
 PORT = 5000
