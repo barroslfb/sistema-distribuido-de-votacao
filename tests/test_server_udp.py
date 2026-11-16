@@ -5,8 +5,8 @@ import threading
 import time
 import unittest
 
-from src.server_udp import atender_datagramas
-from src.voting import Voting
+from src.tcp_udp.server_udp import atender_datagramas
+from src.tcp_udp.voting import Voting
 
 
 class UDPServerTests(unittest.TestCase):

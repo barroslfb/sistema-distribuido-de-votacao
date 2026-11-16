@@ -3,8 +3,8 @@ import threading
 import time
 import unittest
 
-from src.server import atender_conexoes
-from src.voting import Voting
+from src.tcp_udp.server import atender_conexoes
+from src.tcp_udp.voting import Voting
 
 
 class VotingTCPTests(unittest.TestCase):
