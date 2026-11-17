@@ -1,6 +1,15 @@
 
 from datetime import datetime, timezone
 import uuid
+from threading import Lock
+
+
+class VotoRejeitado(ValueError):
+    """Regra de negócio violada, independente do transporte HTTP."""
+
+    def __init__(self, codigo, mensagem):
+        super().__init__(mensagem)
+        self.codigo = codigo
 
 
 class VotingSession:
@@ -37,6 +46,32 @@ class VotingSession:
 
         # Armazena os eleitores que já votaram e suas respectivas opções
         self._votos_por_eleitor = {}
+        self._lock = Lock()
+
+    def registrar_voto(self, eleitor_id, opcao, agora=None):
+        """Valida e registra atomicamente; retorna uma cópia do novo placar.
+
+        O intervalo ativo inclui o início e exclui o fim. `agora` permite
+        testar os limites do prazo sem esperas ou alteração da sessão.
+        """
+        for valor in (eleitor_id, opcao):
+            if (not isinstance(valor, str) or not valor.strip()
+                    or not valor.isprintable() or valor != valor.strip()):
+                raise ValueError("Eleitor e opção devem ser textos válidos sem espaços nas extremidades.")
+
+        with self._lock:
+            if opcao not in self._opcoes:
+                raise VotoRejeitado("opcao_invalida", "Opção inválida para esta sessão.")
+            instante = (datetime.now(timezone.utc) if agora is None
+                        else self._validar_data_hora(agora, "agora"))
+            if not self._inicio <= instante < self._fim:
+                raise VotoRejeitado("fora_do_prazo", "A sessão não está no período de votação.")
+            if eleitor_id in self._votos_por_eleitor:
+                raise VotoRejeitado("voto_duplicado", "Este eleitor já votou nesta sessão.")
+
+            self._votos_por_eleitor[eleitor_id] = opcao
+            self._placar[opcao] += 1
+            return self._placar.copy()
 
 
 
@@ -112,7 +147,8 @@ class VotingSession:
     def eleitores(self):
         # Retorna os identificadores dos eleitores que já votaram.
 
-        return set(self._votos_por_eleitor.keys())
+        with self._lock:
+            return set(self._votos_por_eleitor.keys())
 
 
 
@@ -121,7 +157,8 @@ class VotingSession:
     def obter_placar(self):
         # Retorna uma cópia do placar atual.
 
-        return self._placar.copy()
+        with self._lock:
+            return self._placar.copy()
 
 
 
@@ -130,11 +167,12 @@ class VotingSession:
     def obter_dados(self):
         # Retorna todos os dados públicos da sessão.
 
-        return {
-            "id": self._id,
-            "opcoes": list(self._opcoes),
-            "placar": self._placar.copy(),
-            "eleitores": sorted(self._votos_por_eleitor.keys()),
-            "inicio": self._inicio.isoformat(),
-            "fim": self._fim.isoformat(),
-        }
+        with self._lock:
+            return {
+                "id": self._id,
+                "opcoes": list(self._opcoes),
+                "placar": self._placar.copy(),
+                "eleitores": sorted(self._votos_por_eleitor.keys()),
+                "inicio": self._inicio.isoformat(),
+                "fim": self._fim.isoformat(),
+            }

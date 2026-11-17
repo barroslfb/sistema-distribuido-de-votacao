@@ -71,6 +71,68 @@ Se o broker não estiver disponível ou a declaração falhar, a API não comple
 
 Ao executar a API fora do Compose, configure `RABBITMQ_URL` para uma URL AMQP acessível. O padrão local é `amqp://guest:guest@localhost:5672/`. A API não inicia se não conseguir conectar ao broker ou declarar o exchange.
 
+### Registro de votos REST — Feature 14
+
+A API reutiliza a classe `VotingSession` de `src/voting.py`. Ao iniciar, cria a
+sessão demonstrativa **entrega1**, com opções A, B e C e duração de 300 segundos.
+O estado está em `app.state.sessoes`, apenas em memória. Reiniciar a API zera os
+votos e reinicia o prazo. Execute com um único worker: múltiplos processos teriam
+sessões independentes. Esta feature não adiciona cadastro de sessões ou publicação
+de eventos; a apuração via RabbitMQ será implementada na Feature 16.
+
+Envie `POST /sessoes/{sessao_id}/votos`, com corpo JSON:
+
+```json
+{"eleitor_id":"ana","opcao":"A"}
+```
+
+Os dois campos são strings obrigatórias de 1 a 100 caracteres, sem caracteres de
+controle nem espaços nas extremidades. Campos adicionais são rejeitados. As opções
+são comparadas exatamente como configuradas na sessão, inclusive maiúsculas.
+
+Após validar o formato e localizar a sessão, a ordem é **opção válida → prazo →
+voto duplicado → registro**. O prazo inclui o início e exclui o fim. Uma trava por
+sessão protege a sequência completa, evitando que dois pedidos simultâneos do mesmo
+eleitor sejam registrados. Votos rejeitados não alteram o estado. O método
+`registrar_voto()` atualiza o placar e o histórico do eleitor e retorna uma cópia
+do placar. As consultas da sessão também são protegidas pela mesma trava.
+
+| HTTP | Resultado |
+| --- | --- |
+| 201 | Voto registrado; retorna `mensagem`, `sessao_id` e `placar` |
+| 400 | `opcao_invalida` |
+| 403 | `fora_do_prazo` (ainda não iniciou ou já terminou) |
+| 404 | `sessao_inexistente` |
+| 409 | `voto_duplicado` |
+| 422 | Corpo JSON ou formato dos campos inválido, descrito em `detail` |
+
+Exemplo de resposta 201:
+
+```json
+{"mensagem":"Voto registrado com sucesso.","sessao_id":"entrega1","placar":{"A":1,"B":0,"C":0}}
+```
+
+Os erros de negócio usam este formato (exemplo de resposta 409):
+
+```json
+{"detail":{"codigo":"voto_duplicado","mensagem":"Este eleitor já votou nesta sessão."}}
+```
+
+Com a API e o broker iniciados pelos comandos acima, envie no PowerShell:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/sessoes/entrega1/votos -ContentType 'application/json' -Body '{"eleitor_id":"ana","opcao":"A"}'
+```
+
+Repita para observar o erro 409 ou use outro eleitor. A documentação interativa
+está em `http://localhost:8000/docs`. Para começar de novo no Compose, execute
+`docker compose restart api`.
+
+Os testes em `tests/test_api_votes.py` e `tests/test_voting_session_votes.py`
+cobrem os códigos HTTP, formato, regras, limites do prazo, isolamento entre sessões,
+cópias de consulta e votos simultâneos. São executados pelo mesmo comando da suíte
+abaixo; a conexão inicial com RabbitMQ é simulada nos testes da API.
+
 ### Implementação legada TCP/UDP
 
 Escolha uma das versões e mantenha o servidor em execução enquanto usa os clientes. A votação começa ao iniciar o servidor e dura **300 segundos**, por padrão.
@@ -150,7 +212,8 @@ Estrutura resumida do repositório:
 | `src/tcp_udp/server_udp.py` / `src/tcp_udp/client_udp.py` | Servidor UDP e cliente; o servidor associa a sessão ao endereço IP e porta de origem. |
 | `src/tcp_udp/voting.py` | Regras, prazo, contagem e histórico de votos legados, protegidos por trava. |
 | `src/tcp_udp/protocol.py` | Codificação UTF-8 e enquadramento das mensagens TCP por quebra de linha. |
-| `src/controllers/api.py` | API FastAPI com o endpoint `GET /health` e declaração do exchange no startup. |
+| `src/controllers/api.py` | Health check, sessão demonstrativa, rota REST de votos e declaração do exchange no startup. |
+| `src/voting.py` | Sessão em memória e registro sequencial de votos protegido por trava. |
 | `src/services/broker.py` | Conexão AMQP curta usando `RABBITMQ_URL` e declaração de `apuracao.votos` (`fanout`). |
 | `Dockerfile` / `docker-compose.yml` | Imagem e execução da API e RabbitMQ, com health check do broker e inicialização ordenada. |
 | `requirements.txt` | Dependências da API e do cliente RabbitMQ. |
@@ -162,20 +225,16 @@ Os clientes enviam `JOIN identificador` e `VOTE opção`; o servidor responde `S
 
 No TCP, o identificador pertence à conexão e pode ser usado em uma reconexão, mas não permite votar novamente. No UDP, um identificador fica associado ao endereço de origem durante a execução do servidor; outro endereço não pode assumir esse identificador. Identificadores não são autenticados. Votos e associações ficam apenas na memória e são perdidos ao reiniciar o servidor. O projeto é demonstrativo, não um sistema seguro para eleições reais.
 
-## Arquitetura planejada e próximos passos
+## Próxima etapa: publicação da apuração
 
-A evolução planejada é integrar a API FastAPI ao RabbitMQ para comunicação distribuída. A configuração do broker no Compose e a conexão AMQP básica da API estão implementadas. Fluxos de mensagens e orquestração de votação ainda não foram implementados; o projeto não apresenta um sistema de votação HTTP integrado ao broker.
+A votação HTTP já está implementada na Feature 14 pela rota
+`POST /sessoes/{sessao_id}/votos`. A API valida e registra votos na sessão em
+memória, atualizando o placar e impedindo votos duplicados.
 
-Componentes previstos, ainda sem implementação:
-
-- **Cliente de apuração:** futuro consumidor de resultados/eventos para reunir ou consultar a apuração distribuída.
-- **Integração com o broker:** futuro componente responsável pela publicação e pelo consumo de mensagens via RabbitMQ. Os nomes/caminhos dos módulos serão definidos durante a implementação.
-
-Próximos passos não implementados:
-
-1. Implementar fluxos distribuídos de votação através do broker.
-2. Criar testes de integração reais com RabbitMQ.
-3. Atualizar esta documentação conforme os componentes forem implementados.
+A publicação de eventos de apuração no RabbitMQ ainda será implementada na
+Feature 16. A configuração do broker no Compose e a declaração inicial do
+exchange `apuracao.votos` (`fanout`) já existem; falta publicar o placar após
+cada voto válido e disponibilizar as atualizações aos consumidores.
 
 ## Testes
 
@@ -187,12 +246,7 @@ python -m unittest discover -s tests -v
 
 Os testes incluem regras de votação, concorrência, comunicação UDP, envio de atualizações e resultado final, além do health check e teste isolado da criação da conexão RabbitMQ. Alguns abrem sockets locais. Não é necessário iniciar RabbitMQ para executar a suíte.
 
-## Branches
+## Branch de trabalho
 
-Branches locais observadas no repositório:
-
-- `main`
-- `main-tcp-udp-implementation`
-- `feature-12/organizacao-base` (branch atual durante a atualização deste README)
-
-`main` é a linha principal do projeto; `main-tcp-udp-implementation` identifica a implementação legada TCP/UDP. `feature-12/organizacao-base` é a branch atual durante a atualização deste README. Esses nomes não significam que RabbitMQ já esteja implementado.
+As instruções deste README descrevem o conteúdo do repositório. Consulte o GitHub
+para ver as branches disponíveis e a branch ativa do seu checkout.
