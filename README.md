@@ -225,20 +225,16 @@ Os clientes enviam `JOIN identificador` e `VOTE opção`; o servidor responde `S
 
 No TCP, o identificador pertence à conexão e pode ser usado em uma reconexão, mas não permite votar novamente. No UDP, um identificador fica associado ao endereço de origem durante a execução do servidor; outro endereço não pode assumir esse identificador. Identificadores não são autenticados. Votos e associações ficam apenas na memória e são perdidos ao reiniciar o servidor. O projeto é demonstrativo, não um sistema seguro para eleições reais.
 
-## Arquitetura planejada e próximos passos
+## Próxima etapa: publicação da apuração
 
-A evolução planejada é integrar a API FastAPI ao RabbitMQ para comunicação distribuída. A configuração do broker no Compose e a conexão AMQP básica da API estão implementadas. Fluxos de mensagens e orquestração de votação ainda não foram implementados; o projeto não apresenta um sistema de votação HTTP integrado ao broker.
+A votação HTTP já está implementada na Feature 14 pela rota
+`POST /sessoes/{sessao_id}/votos`. A API valida e registra votos na sessão em
+memória, atualizando o placar e impedindo votos duplicados.
 
-Componentes previstos, ainda sem implementação:
-
-- **Cliente de apuração:** futuro consumidor de resultados/eventos para reunir ou consultar a apuração distribuída.
-- **Integração com o broker:** futuro componente responsável pela publicação e pelo consumo de mensagens via RabbitMQ. Os nomes/caminhos dos módulos serão definidos durante a implementação.
-
-Próximos passos não implementados:
-
-1. Implementar fluxos distribuídos de votação através do broker.
-2. Criar testes de integração reais com RabbitMQ.
-3. Atualizar esta documentação conforme os componentes forem implementados.
+A publicação de eventos de apuração no RabbitMQ ainda será implementada na
+Feature 16. A configuração do broker no Compose e a declaração inicial do
+exchange `apuracao.votos` (`fanout`) já existem; falta publicar o placar após
+cada voto válido e disponibilizar as atualizações aos consumidores.
 
 ## Testes
 
@@ -250,12 +246,7 @@ python -m unittest discover -s tests -v
 
 Os testes incluem regras de votação, concorrência, comunicação UDP, envio de atualizações e resultado final, além do health check e teste isolado da criação da conexão RabbitMQ. Alguns abrem sockets locais. Não é necessário iniciar RabbitMQ para executar a suíte.
 
-## Branches
+## Branch de trabalho
 
-Branches locais observadas no repositório:
-
-- `main`
-- `main-tcp-udp-implementation`
-- `feature-12/organizacao-base` (branch atual durante a atualização deste README)
-
-`main` é a linha principal do projeto; `main-tcp-udp-implementation` identifica a implementação legada TCP/UDP. `feature-12/organizacao-base` é a branch atual durante a atualização deste README. Esses nomes não significam que RabbitMQ já esteja implementado.
+As instruções deste README descrevem o conteúdo do repositório. Consulte o GitHub
+para ver as branches disponíveis e a branch ativa do seu checkout.
