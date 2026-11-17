@@ -1,11 +1,19 @@
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from threading import Lock
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 
-from ..services.broker import declare_voting_exchange
+from ..services.broker import PublicacaoFalhou, declare_voting_exchange, publish_scoreboard_update
 from ..voting import VotingSession, VotoRejeitado
+
+logger = logging.getLogger(__name__)
+
+# Serializa as publicações: cada evento lê o placar atual dentro da trava,
+# então os consumidores nunca recebem um placar mais antigo depois de um mais novo.
+_publicacao_lock = Lock()
 
 
 @asynccontextmanager
@@ -44,9 +52,12 @@ class VotoResponse(BaseModel):
     mensagem: str
     sessao_id: str
     placar: dict[str, int]
+    # Presente apenas quando o voto foi registrado mas a publicação falhou.
+    aviso: str | None = None
 
 
 @app.post("/sessoes/{sessao_id}/votos", status_code=201, response_model=VotoResponse,
+          response_model_exclude_none=True,
           responses={400: {"description": "Opção inválida"},
                      403: {"description": "Fora do prazo"},
                      404: {"description": "Sessão inexistente"},
@@ -62,5 +73,16 @@ def registrar_voto(sessao_id: str, voto: VotoRequest):
         status = {"opcao_invalida": 400, "fora_do_prazo": 403, "voto_duplicado": 409}
         raise HTTPException(status[erro.codigo],
                             detail={"codigo": erro.codigo, "mensagem": str(erro)}) from erro
-    return {"mensagem": "Voto registrado com sucesso.", "sessao_id": sessao.id,
-            "placar": placar}
+    
+    resposta = {"mensagem": "Voto registrado com sucesso.", "sessao_id": sessao.id,
+                "placar": placar}
+    # Votos rejeitados não publicam.
+    try:
+        with _publicacao_lock:
+            publish_scoreboard_update(sessao.id, sessao.obter_placar())
+    except PublicacaoFalhou as erro:
+        logger.error("Voto registrado na sessão %s, mas a apuração não foi publicada: %s",
+                     sessao.id, erro)
+        resposta["aviso"] = ("Voto registrado, mas a atualização da apuração "
+                             "não pôde ser publicada.")
+    return resposta
