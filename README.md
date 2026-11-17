@@ -71,6 +71,68 @@ Se o broker não estiver disponível ou a declaração falhar, a API não comple
 
 Ao executar a API fora do Compose, configure `RABBITMQ_URL` para uma URL AMQP acessível. O padrão local é `amqp://guest:guest@localhost:5672/`. A API não inicia se não conseguir conectar ao broker ou declarar o exchange.
 
+### Registro de votos REST — Feature 14
+
+A API reutiliza a classe `VotingSession` de `src/voting.py`. Ao iniciar, cria a
+sessão demonstrativa **entrega1**, com opções A, B e C e duração de 300 segundos.
+O estado está em `app.state.sessoes`, apenas em memória. Reiniciar a API zera os
+votos e reinicia o prazo. Execute com um único worker: múltiplos processos teriam
+sessões independentes. Esta feature não adiciona cadastro de sessões ou publicação
+de eventos; a apuração via RabbitMQ será implementada na Feature 16.
+
+Envie `POST /sessoes/{sessao_id}/votos`, com corpo JSON:
+
+```json
+{"eleitor_id":"ana","opcao":"A"}
+```
+
+Os dois campos são strings obrigatórias de 1 a 100 caracteres, sem caracteres de
+controle nem espaços nas extremidades. Campos adicionais são rejeitados. As opções
+são comparadas exatamente como configuradas na sessão, inclusive maiúsculas.
+
+Após validar o formato e localizar a sessão, a ordem é **opção válida → prazo →
+voto duplicado → registro**. O prazo inclui o início e exclui o fim. Uma trava por
+sessão protege a sequência completa, evitando que dois pedidos simultâneos do mesmo
+eleitor sejam registrados. Votos rejeitados não alteram o estado. O método
+`registrar_voto()` atualiza o placar e o histórico do eleitor e retorna uma cópia
+do placar. As consultas da sessão também são protegidas pela mesma trava.
+
+| HTTP | Resultado |
+| --- | --- |
+| 201 | Voto registrado; retorna `mensagem`, `sessao_id` e `placar` |
+| 400 | `opcao_invalida` |
+| 403 | `fora_do_prazo` (ainda não iniciou ou já terminou) |
+| 404 | `sessao_inexistente` |
+| 409 | `voto_duplicado` |
+| 422 | Corpo JSON ou formato dos campos inválido, descrito em `detail` |
+
+Exemplo de resposta 201:
+
+```json
+{"mensagem":"Voto registrado com sucesso.","sessao_id":"entrega1","placar":{"A":1,"B":0,"C":0}}
+```
+
+Os erros de negócio usam este formato (exemplo de resposta 409):
+
+```json
+{"detail":{"codigo":"voto_duplicado","mensagem":"Este eleitor já votou nesta sessão."}}
+```
+
+Com a API e o broker iniciados pelos comandos acima, envie no PowerShell:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/sessoes/entrega1/votos -ContentType 'application/json' -Body '{"eleitor_id":"ana","opcao":"A"}'
+```
+
+Repita para observar o erro 409 ou use outro eleitor. A documentação interativa
+está em `http://localhost:8000/docs`. Para começar de novo no Compose, execute
+`docker compose restart api`.
+
+Os testes em `tests/test_api_votes.py` e `tests/test_voting_session_votes.py`
+cobrem os códigos HTTP, formato, regras, limites do prazo, isolamento entre sessões,
+cópias de consulta e votos simultâneos. São executados pelo mesmo comando da suíte
+abaixo; a conexão inicial com RabbitMQ é simulada nos testes da API.
+
 ### Implementação legada TCP/UDP
 
 Escolha uma das versões e mantenha o servidor em execução enquanto usa os clientes. A votação começa ao iniciar o servidor e dura **300 segundos**, por padrão.
@@ -150,7 +212,8 @@ Estrutura resumida do repositório:
 | `src/tcp_udp/server_udp.py` / `src/tcp_udp/client_udp.py` | Servidor UDP e cliente; o servidor associa a sessão ao endereço IP e porta de origem. |
 | `src/tcp_udp/voting.py` | Regras, prazo, contagem e histórico de votos legados, protegidos por trava. |
 | `src/tcp_udp/protocol.py` | Codificação UTF-8 e enquadramento das mensagens TCP por quebra de linha. |
-| `src/controllers/api.py` | API FastAPI com o endpoint `GET /health` e declaração do exchange no startup. |
+| `src/controllers/api.py` | Health check, sessão demonstrativa, rota REST de votos e declaração do exchange no startup. |
+| `src/voting.py` | Sessão em memória e registro sequencial de votos protegido por trava. |
 | `src/services/broker.py` | Conexão AMQP curta usando `RABBITMQ_URL` e declaração de `apuracao.votos` (`fanout`). |
 | `Dockerfile` / `docker-compose.yml` | Imagem e execução da API e RabbitMQ, com health check do broker e inicialização ordenada. |
 | `requirements.txt` | Dependências da API e do cliente RabbitMQ. |
