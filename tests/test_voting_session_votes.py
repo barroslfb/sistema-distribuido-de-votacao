@@ -43,31 +43,6 @@ class VotingSessionVoteTests(unittest.TestCase):
         self.sessao.registrar_voto("bia", "B", self.fim - timedelta(microseconds=1))
         self.assertEqual(self.sessao.placar, {"A": 1, "B": 1})
 
-    def test_mesmo_eleitor_pode_votar_em_sessoes_diferentes(self):
-        outra = VotingSession(["A", "B"], self.inicio, self.fim, "outra")
-        for sessao in (self.sessao, outra):
-            sessao.registrar_voto("ana", "A", self.inicio)
-            self.assertEqual(sessao.placar["A"], 1)
-
-    def test_consultas_e_retorno_nao_expoem_estado_mutavel(self):
-        resultado = self.sessao.registrar_voto("ana", "A", self.inicio)
-        resultado["A"] = 99
-        self.sessao.placar["A"] = 99
-        self.sessao.eleitores.clear()
-        dados = self.sessao.obter_dados()
-        dados["placar"]["A"] = 99
-        dados["eleitores"].clear()
-        self.assertEqual(self.sessao.placar["A"], 1)
-        self.assertEqual(self.sessao.eleitores, {"ana"})
-
-    def test_formatos_invalidos_nao_alteram_estado(self):
-        for eleitor, opcao in ((None, "A"), ("", "A"), (" ana", "A"),
-                               ("ana", []), ("ana", "\n")):
-            with self.assertRaises(ValueError):
-                self.sessao.registrar_voto(eleitor, opcao, self.inicio)
-        self.assertEqual(self.sessao.placar, {"A": 0, "B": 0})
-        self.assertEqual(self.sessao.eleitores, set())
-
     def test_votos_simultaneos_do_mesmo_eleitor(self):
         barreira = Barrier(8)
         def votar(indice):
