@@ -239,18 +239,13 @@ RabbitMQ ativos, execute a suíte na imagem da API:
 docker compose run --rm --no-deps -v "$PWD/tests:/app/tests:ro" api python -m unittest discover -s tests -v
 ```
 
-## Branch de trabalho
-
-As instruções deste README descrevem o conteúdo do repositório. Consulte o GitHub
-para ver as branches disponíveis e a branch ativa do seu checkout.
-
-## Implementação TCP/UDP (branch separada)
+## Implementação TCP/UDP (Implementação Legada)
 
 Os módulos e testes TCP/UDP são preservados na branch
 `main-tcp-udp-implementation`. Para acessá-los, mude para essa branch:
 
 ```sh
-git switch main-tcp-udp-implementation
+git checkout main-tcp-udp-implementation
 ```
 
 Escolha uma das versões e mantenha o servidor em execução enquanto usa os clientes. A votação começa ao iniciar o servidor e dura **300 segundos**, por padrão.
