@@ -89,19 +89,29 @@ class VotacaoClientTests(unittest.TestCase):
         for tipo_erro in (httpx.ConnectError, httpx.ReadTimeout):
             with self.subTest(tipo_erro=tipo_erro):
                 def responder(requisicao):
-                    raise tipo_erro("API indisponível", request=requisicao)
+                    raise tipo_erro("http://user:secret@api.test:9000", request=requisicao)
 
-                codigo, saida, erro = self.executar_cliente(responder)
+                with self.assertLogs("src.votacao_client", "ERROR") as logs:
+                    codigo, saida, erro = self.executar_cliente(responder)
 
                 self.assertEqual((codigo, saida), (1, ""))
                 self.assertIn("Falha de comunicação com a API.", erro)
                 self.assertIn("Não foi possível confirmar o registro do voto.", erro)
+                self.assertEqual(len(logs.output), 1)
+                self.assertIn('operacao=voto_http resultado=sem_confirmacao sessao_id="entrega1"',
+                              logs.output[0])
+                self.assertIn(f'motivo="{tipo_erro.__name__}"', logs.output[0])
+                self.assertNotIn("secret", logs.output[0])
 
     def test_erro_do_servidor_sem_resposta_json(self):
-        codigo, saida, erro = self.executar_cliente(
-            lambda _: httpx.Response(503, text="Serviço indisponível")
-        )
+        with self.assertLogs("src.votacao_client", "ERROR") as logs:
+            codigo, saida, erro = self.executar_cliente(
+                lambda _: httpx.Response(503, text="Serviço indisponível")
+            )
 
         self.assertEqual((codigo, saida), (1, ""))
         self.assertIn("HTTP 503", erro)
         self.assertIn("Não foi possível confirmar o registro do voto.", erro)
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("resultado=sem_confirmacao", logs.output[0])
+        self.assertIn("status_http=503", logs.output[0])

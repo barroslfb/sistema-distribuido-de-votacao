@@ -1,10 +1,15 @@
 """Envia um voto à API REST pelo terminal."""
 
 import argparse
+import logging
 import sys
 from urllib.parse import quote
 
 import httpx
+
+from .log_operacional import configurar_logs, registrar
+
+logger = logging.getLogger("src.votacao_client")
 
 
 def corpo_json(resposta):
@@ -48,9 +53,13 @@ def main(argv=None):
     try:
         resposta = httpx.post(url, json={"eleitor_id": eleitor_id, "opcao": opcao}, timeout=5.0)
     except httpx.InvalidURL:
+        registrar(logger, logging.ERROR, "voto_http", "falha",
+                  sessao_id=args.sessao, motivo="endereco_invalido")
         print("Endereço da API inválido. Confira a opção --api-url.", file=sys.stderr)
         return 1
-    except (httpx.RequestError, KeyboardInterrupt):
+    except (httpx.RequestError, KeyboardInterrupt) as erro:
+        registrar(logger, logging.ERROR, "voto_http", "sem_confirmacao",
+                  sessao_id=args.sessao, motivo=type(erro).__name__)
         print("Falha de comunicação com a API. Não foi possível confirmar o registro do voto.",
               file=sys.stderr)
         return 1
@@ -66,10 +75,13 @@ def main(argv=None):
         print(f"Voto rejeitado. {mensagem_rejeicao(resposta)}", file=sys.stderr)
         return 1
 
+    registrar(logger, logging.ERROR, "voto_http", "sem_confirmacao",
+              sessao_id=args.sessao, motivo="resposta_inesperada", status_http=resposta.status_code)
     print(f"Resposta inesperada da API (HTTP {resposta.status_code}). "
           "Não foi possível confirmar o registro do voto.", file=sys.stderr)
     return 1
 
 
 if __name__ == "__main__":
+    configurar_logs()
     sys.exit(main())
