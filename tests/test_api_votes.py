@@ -66,3 +66,17 @@ class VoteEndpointTests(unittest.TestCase):
         )
         self.assertEqual(self.sessao.eleitores, {"ana"})
         self.assertEqual(self.sessao.placar, {"A": 1, "B": 0})
+
+    def test_voto_expirado_nao_altera_estado_nem_publica_evento(self):
+        self.sessao._fim = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+        with patch("src.controllers.api.publish_scoreboard_update") as publicar:
+            response = self.client.post(
+                self.url, json={"eleitor_id": "ana", "opcao": "A"}
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"]["codigo"], "fora_do_prazo")
+        self.assertEqual(self.sessao.eleitores, set())
+        self.assertEqual(self.sessao.placar, {"A": 0, "B": 0})
+        publicar.assert_not_called()
