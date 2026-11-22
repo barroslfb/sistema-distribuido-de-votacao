@@ -73,6 +73,28 @@ Se o broker não estiver disponível ou a declaração falhar, a API não comple
 
 Ao executar a API fora do Compose, configure `RABBITMQ_URL` para uma URL AMQP acessível. O padrão local é `amqp://guest:guest@localhost:5672/`. A API não inicia se não conseguir conectar ao broker ou declarar o exchange.
 
+### Cliente de votação no terminal
+
+Com a API em execução e as dependências instaladas, rode a partir da raiz do
+repositório:
+
+```sh
+python -m src.votacao_client
+```
+
+Quando solicitado, informe o identificador do eleitor e a opção (por exemplo,
+`ana` e `A`). Cada execução envia um voto para a sessão `entrega1` em
+`http://localhost:8000` por padrão. A sessão demonstrativa fica aberta por cinco
+minutos após a inicialização da API. Para indicar outro endereço ou sessão:
+
+```sh
+python -m src.votacao_client --api-url http://localhost:9000 --sessao entrega1
+```
+
+O cliente exibe a confirmação ou o motivo da rejeição retornado pela API. A
+requisição tem tempo limite HTTP de cinco segundos por operação. Em caso de
+falha de comunicação, o cliente informa que o registro ficou sem confirmação.
+
 ### Registro de votos REST
 
 A API reutiliza a classe `VotingSession` de `src/voting.py`. Ao iniciar, cria a
@@ -185,6 +207,7 @@ Estrutura resumida do repositório:
 ├── src/
 │   ├── controllers/     # API FastAPI
 │   ├── services/        # Integração RabbitMQ e cliente de apuração
+│   ├── votacao_client.py # Cliente de votação HTTP no terminal
 │   └── voting.py        # Regras da sessão REST
 ├── tests/               # Testes da votação, API e RabbitMQ
 ├── Dockerfile
@@ -198,6 +221,7 @@ Estrutura resumida do repositório:
 | `src/voting.py` | Sessão em memória e registro sequencial de votos protegido por trava. |
 | `src/services/broker.py` | Conexão AMQP usando `RABBITMQ_URL`, declaração de `apuracao.votos` (`fanout`) e publicação de atualizações. |
 | `src/services/apuracao_client.py` | Cliente que assina a exchange e exibe os eventos de apuração. |
+| `src/votacao_client.py` | Cliente de terminal que envia votos à API REST. |
 | `Dockerfile` / `docker-compose.yml` | Imagem e execução da API e RabbitMQ, com health check do broker e inicialização ordenada. |
 | `requirements.txt` | Dependências da API e do cliente RabbitMQ. |
 | `tests/` | Testes automatizados da votação, API e integração RabbitMQ. |
@@ -214,6 +238,13 @@ distribui eventos às filas temporárias dos clientes conectados; eventos não s
 armazenados para consumidores que iniciem depois.
 
 ## Testes
+
+Com as dependências instaladas, os testes do cliente de votação podem rodar com
+o transporte HTTP simulado, sem iniciar a API ou RabbitMQ:
+
+```sh
+python -m unittest discover -s tests -p test_votacao_client.py -v
+```
 
 Instale dependências e inicie RabbitMQ antes de executar a suíte a partir da raiz.
 O teste da API simula a declaração da exchange no startup, mas votos aceitos
