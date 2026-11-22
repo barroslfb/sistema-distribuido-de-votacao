@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 import pika
 
+from ..log_operacional import registrar
+
 EXCHANGE_NAME = "apuracao.votos"
 logger = logging.getLogger(__name__)
 
@@ -19,30 +21,38 @@ def _rabbitmq_url():
 
 def declare_voting_exchange():
     """Connect briefly to RabbitMQ and declare the voting fanout exchange."""
-    parameters = pika.URLParameters(_rabbitmq_url())
     try:
+        parameters = pika.URLParameters(_rabbitmq_url())
         connection = pika.BlockingConnection(parameters)
     except Exception as exc:
+        registrar(logger, logging.ERROR, "rabbitmq_conexao", "falha",
+                  exchange=EXCHANGE_NAME, finalidade="declaracao", motivo=type(exc).__name__)
         raise RuntimeError(
-            f"Não foi possível conectar ao RabbitMQ; verifique a disponibilidade do broker e RABBITMQ_URL: {exc}"
-        ) from exc
+            "Não foi possível conectar ao RabbitMQ; verifique a disponibilidade do broker e RABBITMQ_URL."
+        ) from None
+    registrar(logger, logging.INFO, "rabbitmq_conexao", "sucesso",
+              exchange=EXCHANGE_NAME, finalidade="declaracao")
 
     declaration_failed = False
     try:
         channel = connection.channel()
         channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type="fanout")
-        logger.info("Declared RabbitMQ exchange %s (fanout)", EXCHANGE_NAME)
+        registrar(logger, logging.INFO, "rabbitmq_declaracao", "sucesso", exchange=EXCHANGE_NAME)
     except Exception as exc:
         declaration_failed = True
+        registrar(logger, logging.ERROR, "rabbitmq_declaracao", "falha",
+                  exchange=EXCHANGE_NAME, motivo=type(exc).__name__)
         raise RuntimeError(
-            f"Não foi possível declarar a exchange {EXCHANGE_NAME!r} (fanout) no RabbitMQ: {exc}"
-        ) from exc
+            f"Não foi possível declarar a exchange {EXCHANGE_NAME!r} (fanout) no RabbitMQ."
+        ) from None
     finally:
         try:
             connection.close()
         except Exception as exc:
+            registrar(logger, logging.WARNING, "rabbitmq_encerramento", "falha",
+                      exchange=EXCHANGE_NAME, finalidade="declaracao", motivo=type(exc).__name__)
             if not declaration_failed:
-                raise RuntimeError(f"Não foi possível encerrar a conexão inicial com o RabbitMQ: {exc}") from exc
+                raise RuntimeError("Não foi possível encerrar a conexão inicial com o RabbitMQ.") from None
 
 
 def publish_scoreboard_update(sessao_id, placar, data_hora=None):
@@ -55,15 +65,19 @@ def publish_scoreboard_update(sessao_id, placar, data_hora=None):
     }
     corpo = json.dumps(evento, ensure_ascii=False).encode("utf-8")
 
-    parameters = pika.URLParameters(_rabbitmq_url())
-    parameters.connection_attempts = 1
-    parameters.socket_timeout = 5
     try:
+        parameters = pika.URLParameters(_rabbitmq_url())
+        parameters.connection_attempts = 1
+        parameters.socket_timeout = 5
         connection = pika.BlockingConnection(parameters)
     except Exception as exc:
+        registrar(logger, logging.ERROR, "rabbitmq_conexao", "falha", sessao_id=sessao_id,
+                  exchange=EXCHANGE_NAME, finalidade="publicacao", motivo=type(exc).__name__)
         raise PublicacaoFalhou(
-            f"Não foi possível conectar ao RabbitMQ para publicar a apuração: {exc}"
-        ) from exc
+            "Não foi possível conectar ao RabbitMQ para publicar a apuração."
+        ) from None
+    registrar(logger, logging.INFO, "rabbitmq_conexao", "sucesso", sessao_id=sessao_id,
+              exchange=EXCHANGE_NAME, finalidade="publicacao")
 
     try:
         channel = connection.channel()
@@ -74,13 +88,17 @@ def publish_scoreboard_update(sessao_id, placar, data_hora=None):
             properties=pika.BasicProperties(content_type="application/json"),
         )
     except Exception as exc:
+        registrar(logger, logging.ERROR, "rabbitmq_publicacao", "falha",
+                  sessao_id=sessao_id, exchange=EXCHANGE_NAME, motivo=type(exc).__name__)
         raise PublicacaoFalhou(
-            f"Não foi possível publicar a apuração na exchange {EXCHANGE_NAME!r}: {exc}"
-        ) from exc
+            f"Não foi possível publicar a apuração na exchange {EXCHANGE_NAME!r}."
+        ) from None
     finally:
         try:
             connection.close()
-        except Exception:
-            logger.warning("Falha ao encerrar a conexão após publicar a apuração", exc_info=True)
-    logger.info("Atualização de apuração publicada para a sessão %s", sessao_id)
+        except Exception as exc:
+            registrar(logger, logging.WARNING, "rabbitmq_encerramento", "falha", sessao_id=sessao_id,
+                      exchange=EXCHANGE_NAME, finalidade="publicacao", motivo=type(exc).__name__)
+    registrar(logger, logging.INFO, "rabbitmq_publicacao", "sucesso",
+              sessao_id=sessao_id, exchange=EXCHANGE_NAME, data_hora=evento["data_hora"])
     return evento
