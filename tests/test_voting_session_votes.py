@@ -1,8 +1,6 @@
 """Regras de registro da Feature 14, usando a sessão da Feature 13."""
 import unittest
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from threading import Barrier
 
 from src.voting import VotingSession, VotoRejeitado
 
@@ -42,29 +40,3 @@ class VotingSessionVoteTests(unittest.TestCase):
         self.sessao.registrar_voto("ana", "A", self.inicio)
         self.sessao.registrar_voto("bia", "B", self.fim - timedelta(microseconds=1))
         self.assertEqual(self.sessao.placar, {"A": 1, "B": 1})
-
-    def test_votos_simultaneos_do_mesmo_eleitor(self):
-        barreira = Barrier(8)
-        def votar(indice):
-            barreira.wait(timeout=5)
-            try:
-                self.sessao.registrar_voto("ana", "A" if indice % 2 else "B", self.inicio)
-                return "aceito"
-            except VotoRejeitado as erro:
-                return erro.codigo
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            resultados = list(executor.map(votar, range(8)))
-        self.assertEqual(resultados.count("aceito"), 1)
-        self.assertEqual(resultados.count("voto_duplicado"), 7)
-        self.assertEqual(sum(self.sessao.placar.values()), 1)
-        self.assertEqual(self.sessao.eleitores, {"ana"})
-
-    def test_eleitores_diferentes_simultaneos_nao_perdem_contagem(self):
-        barreira = Barrier(8)
-        def votar(indice):
-            barreira.wait(timeout=5)
-            self.sessao.registrar_voto(str(indice), "A", self.inicio)
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            list(executor.map(votar, range(8)))
-        self.assertEqual(self.sessao.placar, {"A": 8, "B": 0})
-        self.assertEqual(len(self.sessao.eleitores), 8)

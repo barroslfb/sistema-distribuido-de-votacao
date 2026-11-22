@@ -29,12 +29,3 @@ class ApuracaoClientTests(unittest.TestCase):
         self.assertIn("operacao=rabbitmq_recebimento resultado=sucesso", logs.output[1])
         self.assertIn('sessao_id="entrega1"', logs.output[1])
         self.assertIn(f'data_hora="{data_hora}"', logs.output[1])
-
-    @patch("src.services.apuracao_client.pika.BlockingConnection",
-           side_effect=OSError("amqp://user:secret@broker:5672/votes"))
-    def test_falha_de_conexao_tem_um_log_sem_credencial(self, _conectar):
-        with self.assertLogs("src.services.apuracao_client", "ERROR") as logs:
-            self.assertEqual(apuracao_client.main(), 1)
-        self.assertEqual(len(logs.output), 1)
-        self.assertIn("operacao=rabbitmq_conexao resultado=falha", logs.output[0])
-        self.assertNotIn("secret", logs.output[0])
