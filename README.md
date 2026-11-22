@@ -171,12 +171,69 @@ chamada com o mesmo eleitor para observar o erro 409. A documentação interativ
 está em `http://localhost:8000/docs`. Para começar de novo no Compose, execute
 `docker compose restart api`.
 
+#### Roteiro reproduzível: válido, duplicado e fora do prazo
+
+Reinicie a API para começar uma sessão limpa. O prazo de cinco minutos começa
+quando a API inicia (não quando chega o primeiro voto):
+
+```sh
+docker compose restart api
+```
+
+Em um terminal separado, inicie pelo menos dois clientes de apuração, antes de
+enviar votos:
+
+```sh
+python -m src.services.apuracao_client
+```
+
+Em outro terminal, execute as chamadas abaixo logo após o restart. A primeira
+deve retornar **201**, com placar `A: 1`; a segunda, com o mesmo eleitor, deve
+retornar **409** e `voto_duplicado`. Ela não altera o placar nem publica uma
+atualização:
+
+```sh
+curl -i --request POST --url http://localhost:8000/sessoes/entrega1/votos --header 'Content-Type: application/json' --data-raw '{"eleitor_id":"roteiro-ana","opcao":"A"}'
+curl -i --request POST --url http://localhost:8000/sessoes/entrega1/votos --header 'Content-Type: application/json' --data-raw '{"eleitor_id":"roteiro-ana","opcao":"B"}'
+```
+
+Para verificar o prazo sem alterar a aplicação, aguarde os 300 segundos desde
+que a API reiniciou e envie um voto de outro eleitor. A resposta deve ser
+**403** com `fora_do_prazo`:
+
+```sh
+sleep 300
+curl -i --request POST --url http://localhost:8000/sessoes/entrega1/votos --header 'Content-Type: application/json' --data-raw '{"eleitor_id":"roteiro-bia","opcao":"B"}'
+```
+
+Reiniciar a API inicia uma sessão nova; se os 300 segundos já tiverem passado
+antes da primeira chamada, reinicie-a novamente e repita o roteiro.
+
+Os logs operacionais da API são emitidos no console em nível `INFO` ou
+`WARNING`. Consulte-os no terminal em que Uvicorn está rodando ou, no Compose,
+com:
+
+```sh
+docker compose logs -f api
+```
+
+Votos aceitos aparecem, por exemplo, como
+`INFO src.controllers.api operacao=voto resultado=aceito sessao_id="entrega1" eleitor_id="roteiro-ana"`.
+Rejeições incluem `resultado=rejeitado` e o campo `motivo`, por exemplo
+`motivo="voto_duplicado"` ou `motivo="fora_do_prazo"`. Cada cliente de apuração
+exibe os placares recebidos no próprio terminal e registra
+`operacao=rabbitmq_recebimento resultado=sucesso` nos logs.
+
 Ambos os clientes ficam inscritos na exchange `apuracao.votos` (`fanout`) e
 devem exibir cada atualização publicada enquanto estiverem conectados. Somente
 votos aceitos publicam eventos; votos rejeitados, inclusive opção inválida, não
 geram atualização. Inicie o cliente antes de votar: cada cliente cria uma fila
 exclusiva e temporária, portanto não recebe eventos publicados antes de se
 inscrever; sem clientes conectados não há consumidor para exibir o evento. O
+comando do cliente pode ser executado em vários terminais para acompanhar a
+mesma publicação em cada instância. Essas filas são independentes e desaparecem
+quando o respectivo cliente desconecta; iniciar um cliente depois não reproduz
+eventos antigos. O
 evento publicado é JSON com `sessao_id`, `placar` e `data_hora` UTC,
 por exemplo:
 
@@ -192,11 +249,12 @@ Também não há retry automático nem confirmação/garantia de entrega pelo br
 uma falha pode deixar o voto registrado sem evento correspondente, e o cliente
 não recebe histórico para recuperar atualizações perdidas.
 
-Os testes em `tests/test_api_votes.py` e `tests/test_voting_session_votes.py`
-cobrem os códigos HTTP, formato, regras, limites do prazo e votos simultâneos.
-Os testes simulam a declaração da exchange
-no startup da API, mas os votos aceitos em `test_api_votes.py` fazem publicação
-real: RabbitMQ precisa estar disponível para executar a suíte.
+Os testes em `tests/test_api_votes.py` exercitam o contrato HTTP com a exchange
+declarada e a publicação simuladas; não precisam de RabbitMQ. As regras e os
+limites do prazo também são cobertos em `tests/test_voting_session_votes.py`.
+Os testes de concorrência e publicação real estão em
+`tests/test_api_rabbitmq_integration.py`, que inicia um processo real da API e
+usa RabbitMQ acessível.
 
 ## Arquitetura e protocolo atuais
 
@@ -246,9 +304,8 @@ o transporte HTTP simulado, sem iniciar a API ou RabbitMQ:
 python -m unittest discover -s tests -p test_votacao_client.py -v
 ```
 
-Instale dependências e inicie RabbitMQ antes de executar a suíte a partir da raiz.
-O teste da API simula a declaração da exchange no startup, mas votos aceitos
-publicam no broker real:
+Para executar a suíte completa, incluindo a integração ponta a ponta, instale
+as dependências e inicie RabbitMQ antes de rodar a partir da raiz:
 
 ```sh
 python -m pip install -r requirements.txt
@@ -256,10 +313,14 @@ docker compose up --build -d
 python -m unittest discover -s tests -v
 ```
 
-Os testes incluem regras de votação, concorrência, contrato REST, health check
-e declaração/conexão RabbitMQ. O teste de voto aceito em `test_api_votes.py`
-publica no broker real; os testes em `test_broker.py` simulam as operações AMQP.
-O broker deve estar acessível em
+`test_api_votes.py` usa mocks para a declaração da exchange e a publicação; já
+`test_api_rabbitmq_integration.py` não substitui a publicação nem o cliente AMQP:
+verifica a inicialização e o health check da API real, votos concorrentes,
+entrega `fanout` a múltiplos assinantes e que rejeições não alteram o placar nem
+publicam eventos. É este teste de integração que exige RabbitMQ real. `test_broker.py`
+simula a falha de conexão e verifica a mensagem de erro sem expor credenciais.
+Os testes unitários restantes cobrem regras da sessão, clientes e contrato REST.
+Para executar a suíte completa, o broker deve estar acessível em
 `amqp://guest:guest@localhost:5672/`; para outro endereço, configure
 `RABBITMQ_URL`. Encerre e remova os contêineres com `docker compose down`.
 
